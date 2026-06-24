@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Gesture Particles</title>
+  <link rel="preconnect" href="https://cdn.jsdelivr.net">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="art-stage" aria-label="3D hand gesture particle system">
+    <canvas id="particleCanvas"></canvas>
+
+    <div class="camera-panel">
+      <video id="cameraFeed" class="camera-feed" playsinline muted></video>
+      <div id="cameraNotice" class="camera-notice is-visible" aria-live="polite">
+        <p id="cameraMessage">请开启摄像头以体验手势交互</p>
+        <button id="cameraButton" class="camera-button" type="button">开启摄像头</button>
+      </div>
+    </div>
+
+    <section class="gesture-guide" aria-label="手势指南">
+      <h1>手势指南</h1>
+      <dl>
+        <div><dt>张开手掌</dt><dd>陈宝宝</dd></div>
+        <div><dt>握拳</dt><dd>I Love You !</dd></div>
+        <div><dt>双指捏合</dt><dd>随机显示图片</dd></div>
+        <div><dt>左右挥手</dt><dd>清空文字/图片</dd></div>
+        <div><dt>手掌开合</dt><dd>控制模型扩散/收缩</dd></div>
+        <div><dt>手部移动</dt><dd>控制模型旋转</dd></div>
+      </dl>
+    </section>
+
+    <section class="control-panel" id="controlPanel" aria-label="粒子控制">
+      <button class="control-toggle" id="controlToggle" type="button" aria-expanded="false">模型</button>
+      <div class="control-body">
+        <div class="model-buttons" id="modelButtons">
+          <button type="button" class="model-button is-active" data-model="nebula">星云</button>
+          <button type="button" class="model-button" data-model="firework">烟花</button>
+          <button type="button" class="model-button" data-model="saturn">土星</button>
+          <button type="button" class="model-button" data-model="flower">花朵</button>
+          <button type="button" class="model-button" data-model="heart">爱心</button>
+        </div>
+        <label class="upload-button" for="imageUpload">上传图片</label>
+        <input
+          id="imageUpload"
+          class="image-upload-input"
+          type="file"
+          accept="image/*"
+          multiple
+        >
+        <p class="upload-status" id="uploadStatus" aria-live="polite">未上传图片</p>
+        <label class="field-label">
+          <span>颜色</span>
+          <input id="colorPicker" type="color" value="#b46cff">
+        </label>
+        <label class="field-label">
+          <span>密度</span>
+          <input id="densitySlider" type="range" min="12000" max="70000" step="2000" value="52000">
+        </label>
+      </div>
+    </section>
+
+    <p class="gesture-status" id="gestureStatus">摄像头：未开启</p>
+    <div class="image-overlay" id="imageOverlay" aria-hidden="true">
+      <img id="displayedImage" alt="用户上传的图片">
+    </div>
+    <div class="runtime-error" id="runtimeError" role="alert" aria-live="assertive"></div>
+    <button class="fullscreen-button" id="fullscreenButton" type="button" aria-label="切换全屏">⛶</button>
+  </main>
+
+  <!-- Because camera access requires HTTPS or localhost, please run this project with Live Server. -->
+  <script>
+    window.showRuntimeError = function (message) {
+      var panel = document.getElementById("runtimeError");
+      if (!panel) return;
+      panel.textContent = "运行提示：" + message;
+      panel.classList.add("is-visible");
+    };
+    window.addEventListener("error", function (event) {
+      window.showRuntimeError(event.message || "页面脚本加载失败");
+    });
+    window.addEventListener("unhandledrejection", function (event) {
+      var reason = event.reason;
+      window.showRuntimeError((reason && reason.message) || String(reason || "异步加载失败"));
+    });
+  </script>
+  <script
+    src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"
+    onerror="showRuntimeError('MediaPipe 加载失败，摄像头画面仍可使用，但手势识别不可用')"
+  ></script>
+  <script type="module">
+    const ua = navigator.userAgent;
+    const isSafari = /Safari/i.test(ua) && !/Chrome|Chromium|CriOS|Edg|OPR|Android/i.test(ua);
+    const testCanvas = document.createElement("canvas");
+    const hasWebGL2 = Boolean(testCanvas.getContext("webgl2"));
+    const hasWebGL = hasWebGL2 || Boolean(testCanvas.getContext("webgl"));
+
+    window.APP_RUNTIME = {
+      isSafari,
+      hasWebGL2,
+      lowEffects: isSafari || !hasWebGL2,
+    };
+
+    if (!hasWebGL) {
+      showRuntimeError("当前 Safari 未启用 WebGL，请在 Safari 设置中允许 WebGL 后刷新页面");
+    } else {
+      try {
+        const THREE = await import("https://esm.sh/three@0.160.1");
+        window.THREE = THREE;
+
+        try {
+          const [
+            { EffectComposer },
+            { RenderPass },
+            { UnrealBloomPass },
+            { AfterimagePass },
+          ] = await Promise.all([
+            import("https://esm.sh/three@0.160.1/examples/jsm/postprocessing/EffectComposer.js"),
+            import("https://esm.sh/three@0.160.1/examples/jsm/postprocessing/RenderPass.js"),
+            import("https://esm.sh/three@0.160.1/examples/jsm/postprocessing/UnrealBloomPass.js"),
+            import("https://esm.sh/three@0.160.1/examples/jsm/postprocessing/AfterimagePass.js"),
+          ]);
+          window.EffectComposer = EffectComposer;
+          window.RenderPass = RenderPass;
+          window.UnrealBloomPass = UnrealBloomPass;
+          window.AfterimagePass = AfterimagePass;
+        } catch (error) {
+          window.APP_RUNTIME.lowEffects = true;
+          showRuntimeError("后期发光加载失败，已切换为基础粒子模式");
+        }
+
+        await import("./particles.js");
+        await import("./gestures.js");
+        await import("./script.js");
+      } catch (error) {
+        showRuntimeError("Three.js 加载失败，请检查网络并使用 localhost 或 HTTPS 打开");
+        console.error(error);
+      }
+    }
+  </script>
+</body>
+</html>
