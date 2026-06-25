@@ -93,6 +93,7 @@ class ParticleArtwork {
     this.starField = null;
     this.starLayers = [];
     this.backgroundCount = 0;
+    this.rainParticles = null;
     this.composer = null;
     this.bloomPass = null;
     this.afterimagePass = null;
@@ -103,6 +104,7 @@ class ParticleArtwork {
     this.createPostProcessing();
     this.createParticleSystem(this.density);
     this.createBackground();
+    this.createRainParticles();
     this.setModel("nebula");
 
     window.addEventListener("resize", () => this.resize());
@@ -152,6 +154,13 @@ class ParticleArtwork {
         this.runtime.isSafari ? 1 : 1.5,
       );
     });
+    if (this.rainParticles) {
+      this.rainParticles.material.uniforms.uAspect.value = this.camera.aspect;
+      this.rainParticles.material.uniforms.uPixelRatio.value = Math.min(
+        window.devicePixelRatio || 1,
+        this.runtime.isSafari ? 1 : 1.5,
+      );
+    }
     this.updateBackgroundDistribution();
   }
 
@@ -454,6 +463,92 @@ class ParticleArtwork {
     });
   }
 
+  createRainParticles() {
+    const count = this.runtime.isSafari ? 1800 : 4200;
+    const positions = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const seeds = new Float32Array(count);
+    const palette = [
+      new THREE.Color("#ff4fb5"),
+      new THREE.Color("#ad7bff"),
+      new THREE.Color("#5f9dff"),
+      new THREE.Color("#50e6df"),
+      new THREE.Color("#fff6ff"),
+      new THREE.Color("#ffd36a"),
+    ];
+
+    for (let i = 0; i < count; i += 1) {
+      const i3 = i * 3;
+      positions[i3] = Math.random();
+      positions[i3 + 1] = Math.random();
+      positions[i3 + 2] = Math.random();
+      seeds[i] = Math.random();
+      const color = palette[i % palette.length];
+      colors[i3] = color.r;
+      colors[i3 + 1] = color.g;
+      colors[i3 + 2] = color.b;
+    }
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute("aSeed", new THREE.BufferAttribute(seeds, 1));
+    const material = new THREE.ShaderMaterial({
+      transparent: true,
+      depthWrite: false,
+      depthTest: false,
+      blending: THREE.AdditiveBlending,
+      toneMapped: true,
+      uniforms: {
+        uTime: { value: 0 },
+        uAspect: { value: this.camera.aspect },
+        uPixelRatio: {
+          value: Math.min(window.devicePixelRatio || 1, this.runtime.isSafari ? 1 : 1.5),
+        },
+      },
+      vertexShader: `
+        attribute vec3 color;
+        attribute float aSeed;
+        varying vec3 vColor;
+        varying float vAlpha;
+        uniform float uTime;
+        uniform float uAspect;
+        uniform float uPixelRatio;
+        void main() {
+          float speed = 0.24 + aSeed * 0.34;
+          float cycle = fract(position.y - uTime * speed - aSeed * 0.7);
+          float x = (position.x * 2.0 - 1.0) * (4.9 * uAspect);
+          x += sin(uTime * 0.7 + aSeed * 19.0) * (0.08 + aSeed * 0.16);
+          float y = cycle * 8.4 - 4.2;
+          float z = 2.3 + position.z * 0.8;
+          vec4 mvPosition = modelViewMatrix * vec4(x, y, z, 1.0);
+          gl_Position = projectionMatrix * mvPosition;
+          gl_PointSize = (3.0 + aSeed * 4.2) * uPixelRatio;
+          vColor = color;
+          vAlpha = 0.28 + aSeed * 0.32;
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vColor;
+        varying float vAlpha;
+        void main() {
+          vec2 uv = gl_PointCoord - vec2(0.5);
+          float horizontal = 1.0 - smoothstep(0.05, 0.46, abs(uv.x));
+          float trail = 1.0 - smoothstep(-0.46, 0.5, uv.y);
+          float head = 1.0 - smoothstep(0.04, 0.28, length(uv - vec2(0.0, -0.24)));
+          float alpha = horizontal * max(trail * 0.62, head) * vAlpha;
+          if (alpha < 0.015) discard;
+          gl_FragColor = vec4(vColor, alpha);
+        }
+      `,
+    });
+    this.rainParticles = new THREE.Points(geometry, material);
+    this.rainParticles.frustumCulled = false;
+    this.rainParticles.renderOrder = 4;
+    this.rainParticles.visible = false;
+    this.scene.add(this.rainParticles);
+  }
+
   setDensity(value) {
     const next = this.clampDensity(value);
     if (next === this.maxCount) return;
@@ -564,6 +659,7 @@ class ParticleArtwork {
     this.imageLayoutPhase += 1.37;
     this.imageStage = 1;
     this.imageStageTime = 0;
+    if (this.rainParticles) this.rainParticles.visible = true;
 
     for (let i = 0; i < this.maxCount; i += 1) {
       const i3 = i * 3;
@@ -609,6 +705,7 @@ class ParticleArtwork {
     this.imageFlow = 0;
     this.imageStage = 0;
     this.imageStageTime = 0;
+    if (this.rainParticles) this.rainParticles.visible = false;
   }
 
   generateTargets(name) {
@@ -1005,6 +1102,9 @@ class ParticleArtwork {
           0.88 + Math.sin(time * 0.58 + phase) * 0.12
         );
       });
+    }
+    if (this.rainParticles?.visible) {
+      this.rainParticles.material.uniforms.uTime.value = time;
     }
 
     this.burst *= 0.92 ** dt;
